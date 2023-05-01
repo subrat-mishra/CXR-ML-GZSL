@@ -125,7 +125,7 @@ class ZSLNet(nn.Module):
         loss_allignment_cos = (self.args.beta_map * loss_allignment_cos)
         loss_rank = (self.args.beta_rank * loss_rank)
         loss_mapping_consistency = (self.args.beta_con * loss_mapping_consistency)
-        losses = loss_rank + loss_mapping_consistency + 0.0*loss_allignment_cos
+        losses = loss_rank + loss_mapping_consistency + loss_allignment_cos
         return ranks, losses
     
     def sim_score(self, a, b):

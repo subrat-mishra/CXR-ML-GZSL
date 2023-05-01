@@ -18,6 +18,8 @@ from torch.nn.functional import kl_div, softmax, log_softmax
 from numpy import dot
 from numpy.linalg import norm
 from plots import plot_array
+from PIL import Image
+
 # #-------------------------------------------------------------------------------- 
 
     
@@ -29,9 +31,9 @@ class ChexnetTrainer(object):
         self.textual_embeddings = np.load(args.textual_embeddings)
 
         self.model = ZSLNet(self.args, self.textual_embeddings, self.device).to(self.device)
-        self.optimizer = optim.Adam (self.model.parameters(), lr=self.args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=1e-5)
-        # self.optimizer  = optim.SGD(self.model.parameters(), lr=self.args.lr, momentum=0.9, weight_decay=0.0001)
-        # self.scheduler = self.step_lr
+        #self.optimizer = optim.Adam (self.model.parameters(), lr=self.args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=1e-5)
+        self.optimizer  = optim.SGD(self.model.parameters(), lr=self.args.lr, momentum=0.9, weight_decay=1e-4, nesterov=True)
+        #self.scheduler = self.step_lr
         self.scheduler = ReduceLROnPlateau(self.optimizer, factor=0.1, patience=5, mode='min')
         
 
@@ -51,6 +53,10 @@ class ChexnetTrainer(object):
         print(f'\n\nloaded imagenet weights {self.args.pretrained}\n\n\n')
         self.resume_from()
         self.load_from()
+
+        if self.args.image_file:
+            return
+
         self.init_dataset()
         self.steps = [int(step) for step in self.args.steps.split(',')]
         self.time_start = time.time()
@@ -76,7 +82,7 @@ class ChexnetTrainer(object):
 
     def load_from(self):
         if self.args.load_from is not None:
-            checkpoint = torch.load(self.args.load_from)
+            checkpoint = torch.load(self.args.load_from, map_location=torch.device('cpu'))
             self.model.load_state_dict(checkpoint['state_dict'])
             print(f'loaded checkpoint from {self.args.load_from}')
 
@@ -114,13 +120,14 @@ class ChexnetTrainer(object):
 
         self.train_dl = DataLoader(dataset=datasetTrain, batch_size=self.args.batch_size, shuffle=True,  num_workers=4, pin_memory=True)
 
-
+		
         test_transforms = []
         test_transforms.append(transforms.Resize(self.args.resize))
         test_transforms.append(transforms.TenCrop(self.args.crop))
         test_transforms.append(transforms.Lambda(lambda crops: torch.stack([transforms.ToTensor()(crop) for crop in crops])))
         test_transforms.append(transforms.Lambda(lambda crops: torch.stack([normalize(crop) for crop in crops])))
-        
+
+        self.test_transforms = test_transforms
 
         datasetVal =   NIHChestXray(self.args, self.args.val_file, transform=transforms.Compose(test_transforms))
         self.val_dl = DataLoader(dataset=datasetVal, batch_size=self.args.batch_size*10, shuffle=False, num_workers=4, pin_memory=True)
@@ -129,6 +136,37 @@ class ChexnetTrainer(object):
         self.test_dl = DataLoader(dataset=datasetTest, batch_size=self.args.batch_size*3, num_workers=8, shuffle=False, pin_memory=True)
         print(datasetTest.CLASSES)
         
+    def inference(self):
+        image = Image.open(self.args.image_file).convert('RGB')
+
+        normalize = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+
+        test_transforms = []
+        test_transforms.append(transforms.Resize(self.args.resize))
+        test_transforms.append(transforms.TenCrop(self.args.crop))
+        test_transforms.append(transforms.Lambda(lambda crops: torch.stack([transforms.ToTensor()(crop) for crop in crops])))
+        test_transforms.append(transforms.Lambda(lambda crops: torch.stack([normalize(crop) for crop in crops])))
+
+        self.test_transforms = test_transforms
+        transform=transforms.Compose(test_transforms)
+        image = transform(image)
+        self.model.eval()
+        with torch.no_grad():
+            out,_ = self.model(image)
+
+        k = 3
+        single_img_gt = out.cpu().numpy()
+        topk_ind = np.argsort(single_img_gt)[:k]
+        topk_ind = topk_ind[:, :k]
+        most_common = []
+        for col in range(topk_ind.shape[1]):
+            values, counts = np.unique(topk_ind[:, col], return_counts=True)
+            if len(values[counts == np.max(counts)]) > 1:
+                most_common.append(-1)
+            else:
+                most_common.append(values[np.argmax(counts)])
+        print(most_common)
+        return most_common
 
     def train (self):
         
@@ -156,7 +194,7 @@ class ChexnetTrainer(object):
 
             self.print_auroc(val_ind_auroc, self.val_dl.dataset.class_ids_loaded, prefix='val')
             if self.should_test is True:
-                test_ind_auroc = self.test()
+                test_ind_auroc, auroc_seen, auroc_unseen, precision_2, recall_2, f1_score_2, precision_3, recall_3, f1_score_3 = self.test()
                 test_ind_auroc = np.array(test_ind_auroc)
                
                 self.write_results(val_ind_auroc, self.val_dl.dataset.class_ids_loaded, prefix=f'\n\nepoch {self.epoch}\nval', mode='a')
@@ -197,13 +235,13 @@ class ChexnetTrainer(object):
             target = target.to(self.device)
             inputs = inputs.to(self.device)
             output, loss = self.model(inputs, target, self.epoch)
-
-
+            
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
             eta = self.get_eta(self.epoch, batchID)
             epoch_loss +=loss.item()
+
             if batchID % 10 == 9:
                 print(f" epoch [{self.epoch:04d} / {self.args.epochs:04d}] eta: {eta:<20} [{batchID:04}/{len(self.train_dl)}] lr: \t{self.optimizer.param_groups[0]['lr']:0.4E} loss: \t{epoch_loss/batchID:0.5f}")
 
@@ -250,9 +288,11 @@ class ChexnetTrainer(object):
    
     def test(self):
         cudnn.benchmark = True
-        outGT = torch.FloatTensor().cuda()
-        outPRED = torch.FloatTensor().cuda()
+        #outGT = torch.FloatTensor().cuda()
+        #outPRED = torch.FloatTensor().cuda()
        
+        outGT = torch.FloatTensor()
+        outPRED = torch.FloatTensor()
         self.model.eval()
         
         for i, (inputs, target) in enumerate(tqdm(self.test_dl)):
@@ -270,11 +310,13 @@ class ChexnetTrainer(object):
                 
 
 
-        aurocIndividual = self.computeAUROC(outGT, outPRED, self.test_dl.dataset.class_ids_loaded)
-        
-        aurocMean = np.array(aurocIndividual).mean()
-        
-        return aurocIndividual
+        auroc_individual = self.computeAUROC(outGT, outPRED, self.test_dl.dataset.class_ids_loaded)
+        auroc_seen = self.computeAUROC(outGT, outPRED, self.test_dl.dataset.seen_class_ids)
+        auroc_unseen = self.computeAUROC(outGT, outPRED, self.test_dl.dataset.unseen_class_ids)
+        precision_2, recall_2, f1_score_2 = self.precision_recall_f1_evaluator(outGT, outPRED, k=2)
+        precision_3, recall_3, f1_score_3 = self.precision_recall_f1_evaluator(outGT, outPRED, k=3)
+
+        return auroc_individual, auroc_seen, auroc_unseen, precision_2, recall_2, f1_score_2, precision_3, recall_3, f1_score_3
     
     def computeAUROC (self, dataGT, dataPRED, class_ids):
         outAUROC = []
@@ -304,5 +346,66 @@ class ChexnetTrainer(object):
             print (f'{self.val_dl.dataset.CLASSES[class_id]} {aurocIndividual[i]:0.4f}')
         
 
+    def precision_recall_f1_evaluator(self, gt, pred, k=3):
+        pred = torch.sigmoid(pred)
+        pred = pred.cpu().numpy()
+        gt = gt.cpu().numpy()
+        num_imgs = pred.shape[0]
+        num_classes = pred.shape[1]
+        precision_per_image_all = np.zeros((num_imgs))
+        recall_per_image_all = np.zeros((num_imgs))
+        f1_score_per_image_all = np.zeros((num_imgs))
 
+        precision_per_label_all = np.zeros((num_classes))
+        corr_per_label_all = np.zeros((num_classes))
+        pred_per_label_all = np.zeros((num_classes))
 
+        upper_bound = np.zeros((num_imgs))
+        for i in range(num_imgs):
+            # pdb.set_trace()
+            single_img_pred = pred[i]
+            single_img_gt = gt[i]
+
+            if single_img_gt.sum() > k:
+                upper_bound[i] = 1.0
+            else:
+                upper_bound[i] = float(single_img_gt.sum()) / float(k)
+
+            topk_ind = np.argsort(-single_img_pred)[:k]
+            topk_pred = single_img_pred[topk_ind]
+            topk_gt = single_img_gt[topk_ind]
+
+            for pre_ind in topk_ind:
+                pred_per_label_all[pre_ind] += 1.0
+                if single_img_gt[pre_ind] == 1.0:
+                    corr_per_label_all[pre_ind] += 1.0
+
+            corr_anno_label = topk_gt.sum()
+            precision = float(corr_anno_label) / float(k)
+            recall = float(corr_anno_label) / float(single_img_gt.sum())
+            if (precision + recall) == 0.0:
+                f1_score = 0.0
+            else:
+                f1_score = 2 * precision * recall / (precision + recall)
+            precision_per_image_all[i] = precision
+            recall_per_image_all[i] = recall
+            f1_score_per_image_all[i] = f1_score
+
+        for i in range(num_classes):
+            if pred_per_label_all[i] == 0:
+                precision_per_label_all[i] = 0.0
+            else:
+                precision_per_label_all[i] = corr_per_label_all[i] / pred_per_label_all[i]
+
+        total_labels_per_class = gt.sum(axis=0)
+        recall_per_label_all = corr_per_label_all / total_labels_per_class
+
+        # print(f"Precison@{k} perLabel: {precision_per_label_all.mean()}")
+        # print(f"Recall@{k} perLabel: {recall_per_label_all.mean()}")
+        # pdb.set_trace()
+        # print("Precision@3 perImage_upper_bound: {}".format(upper_bound.mean()))
+        # pred: (N, num_classes)
+        # gt: (N, num_classes)
+        precision, recall = precision_per_label_all.mean(), recall_per_label_all.mean()
+        f1_score = 2 * precision * recall / (precision + recall)
+        return precision, recall, f1_score

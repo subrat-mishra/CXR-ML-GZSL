@@ -1,12 +1,13 @@
 CUDA_VISIBLE_DEVICES=0 python train.py \
 --pretrained \
---vision-backbone densenet121 \
+--vision-backbone resnet152 \
 --save-dir checkpoints \
 --epochs 40 \
 --lr 0.0001 \
 --beta-rank 1 \
 --beta-map 0.01 \
---beta-con 0.01 \
+--beta-con 0.1 \
 --neg-penalty 0.20 \
+--batch-size 4 \
 --textual-embeddings embeddings/nih_chest_xray_biobert.npy \
---data-root /data/shamoutlab/nih_chest_xrays
+--data-root /home/rambabu/mmdetection/subrat/data/nih_chest_xrays

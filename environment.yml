@@ -140,7 +140,6 @@ dependencies:
   - testpath=0.4.4
   - threadpoolctl=2.1.0
   - tk=8.6.10
-  - torchvision=0.5.0
   - tornado=6.0.4
   - tqdm=4.55.1
   - traitlets=4.3.3
@@ -155,3 +154,5 @@ dependencies:
   - zipp=3.3.1
   - zlib=1.2.11
   - zstd=1.4.5
+  - pip:
+    - torchvision==0.5.0

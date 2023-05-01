@@ -31,11 +31,14 @@ The components of the network consist of (i) a trainable visual encoder, (ii) a 
 
 Environment setup
 ==================
-
+### Using conda on linux
     git clone https://github.com/nyuad-cai/CXR-ML-GZSL.git
     cd CXR-ML-GZSL
     conda env create -f environment.yml
     conda activate zsl
+
+### Using notebook with and without conda
+    See VC_GZSL.pynb file for more details.
 
 Dataset
 -------------
@@ -90,3 +93,15 @@ Results
 - Below we show some of the visual results for top 3 predictions. Green, orange, and red represent true positives, false negatives, and false positives, respectively. Note that our method predicts the unseen classes as top-3 even when the number of ground-truth labels is greater than 3.
 
 ![](images/q_results.png)
+
+- We compare the performance of our custom proposed approach with author's method
+
+![](images/cust_results11.png)
+-
+![](images/cust_results12.png)
+
+- Class wise comparison with baseline methods. The last 4 italicized classes are unseen during training.
+
+![](images/cust_results21.png)
+-
+![](images/cust_results22.png)

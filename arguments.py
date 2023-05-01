@@ -31,8 +31,9 @@ def parse_args():
 
     argParser.add_argument('--wo-con', dest='wo_con', help='train with out semantic consistency regularizer loss', action='store_true')
     argParser.add_argument('--wo-map', dest='wo_map', help='train with out alignement loss', action='store_true')
-    
 
+
+    argParser.add_argument('--image-file', default=None, type=str, help='Image File for inference')
     argParser.add_argument('--textual-embeddings', default='../text_embeddings/embeddings/nih_chest_xray_biobert.npy', type=str, help='the path to labels embeddings')
     args = argParser.parse_args()
     return args

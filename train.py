@@ -26,7 +26,8 @@ def main ():
     checkpoint = torch.load(f'{args.save_dir}/min_loss_checkpoint.pth.tar')
     trainer.model.load_state_dict(checkpoint['state_dict'])
     print ('Testing the min loss model')
-    test_ind_auroc = trainer.test()
+    #test_ind_auroc = trainer.test()
+    test_ind_auroc, auroc_seen, auroc_unseen, precision_2, recall_2, f1_score_2, precision_3, recall_3, f1_score_3 = trainer.test()
     test_ind_auroc = np.array(test_ind_auroc)
     
 
@@ -37,7 +38,8 @@ def main ():
     checkpoint = torch.load(f'{args.save_dir}/best_auroc_checkpoint.pth.tar')
     trainer.model.load_state_dict(checkpoint['state_dict'])
     print ('Testing the best AUROC model')
-    test_ind_auroc = trainer.test()
+    #test_ind_auroc = trainer.test()
+    test_ind_auroc, auroc_seen, auroc_unseen, precision_2, recall_2, f1_score_2, precision_3, recall_3, f1_score_3 = trainer.test()
     test_ind_auroc = np.array(test_ind_auroc)
     
 
